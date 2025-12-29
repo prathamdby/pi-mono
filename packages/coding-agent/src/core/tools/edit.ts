@@ -7,8 +7,13 @@ import { resolveToCwd } from "./path-utils.js";
 
 /**
  * Generate a unified diff string with line numbers and context
+ * Returns both the diff string and the first changed line number (in the new file)
  */
-function generateDiffString(oldContent: string, newContent: string, contextLines = 4): string {
+function generateDiffString(
+	oldContent: string,
+	newContent: string,
+	contextLines = 4,
+): { diff: string; firstChangedLine: number | undefined } {
 	const parts = Diff.diffLines(oldContent, newContent);
 	const output: string[] = [];
 
@@ -20,6 +25,7 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 	let oldLineNum = 1;
 	let newLineNum = 1;
 	let lastWasChange = false;
+	let firstChangedLine: number | undefined;
 
 	for (let i = 0; i < parts.length; i++) {
 		const part = parts[i];
@@ -29,6 +35,11 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 		}
 
 		if (part.added || part.removed) {
+			// Capture the first changed line (in the new file)
+			if (firstChangedLine === undefined) {
+				firstChangedLine = newLineNum;
+			}
+
 			// Show the change
 			for (const line of raw) {
 				if (part.added) {
@@ -97,7 +108,7 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 		}
 	}
 
-	return output.join("\n");
+	return { diff: output.join("\n"), firstChangedLine };
 }
 
 const editSchema = Type.Object({
@@ -109,6 +120,8 @@ const editSchema = Type.Object({
 export interface EditToolDetails {
 	/** Unified diff of the changes made */
 	diff: string;
+	/** Line number of the first change in the new file (for editor navigation) */
+	firstChangedLine?: number;
 }
 
 export function createEditTool(cwd: string): AgentTool<typeof editSchema> {
@@ -127,7 +140,7 @@ export function createEditTool(cwd: string): AgentTool<typeof editSchema> {
 
 			return new Promise<{
 				content: Array<{ type: "text"; text: string }>;
-				details: { diff: string } | undefined;
+				details: EditToolDetails | undefined;
 			}>((resolve, reject) => {
 				// Check if already aborted
 				if (signal?.aborted) {
@@ -237,6 +250,7 @@ export function createEditTool(cwd: string): AgentTool<typeof editSchema> {
 							signal.removeEventListener("abort", onAbort);
 						}
 
+						const diffResult = generateDiffString(content, newContent);
 						resolve({
 							content: [
 								{
@@ -244,7 +258,7 @@ export function createEditTool(cwd: string): AgentTool<typeof editSchema> {
 									text: `Successfully replaced text in ${path}. Changed ${oldText.length} characters to ${newText.length} characters.`,
 								},
 							],
-							details: { diff: generateDiffString(content, newContent) },
+							details: { diff: diffResult.diff, firstChangedLine: diffResult.firstChangedLine },
 						});
 					} catch (error: any) {
 						// Clean up abort handler
